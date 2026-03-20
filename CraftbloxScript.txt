@@ -1,0 +1,228 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "aimlock",
+    LoadingTitle = "loading.",
+    LoadingSubtitle = "",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "AimlockConfig",
+        FileName = "Config"
+    }
+})
+
+local Tab = Window:CreateTab("Main", 4483362458)
+
+-- Services
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+
+local Player = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local FeatureEnabled  = false
+local IsHoldingKey    = false
+local Keybind         = Enum.UserInputType.MouseButton2
+
+local LockedPart      = nil
+local BaseSmoothing   = 40           
+local CurrentSmoothing = BaseSmoothing
+
+local AimPart         = "HumanoidRootPart"
+local UseRandomPart   = true         
+local LastRandomSwitch = 0
+local RANDOM_SWITCH_INTERVAL = 0.3
+
+local PossibleAimParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"}
+
+local RayParams = RaycastParams.new()
+RayParams.FilterType = Enum.RaycastFilterType.Exclude
+RayParams.FilterDescendantsInstances = {Player.Character or Player.CharacterAdded:Wait()}
+
+local lastVariationUpdate = 0
+local VARIATION_INTERVAL = 0.25
+local EXTRA_MIN = 5
+local EXTRA_MAX = 10
+
+local function UpdateDynamicSmoothing()
+    local now = tick()
+    if now - lastVariationUpdate >= VARIATION_INTERVAL then
+        local extra = math.random() * (EXTRA_MAX - EXTRA_MIN) + EXTRA_MIN
+        CurrentSmoothing = BaseSmoothing + extra
+        lastVariationUpdate = now
+    end
+end
+
+local function GetCurrentAimPart()
+    if not UseRandomPart then
+        return AimPart
+    end
+
+    local now = tick()
+    if now - LastRandomSwitch >= RANDOM_SWITCH_INTERVAL then
+        AimPart = PossibleAimParts[math.random(1, #PossibleAimParts)]
+        LastRandomSwitch = now
+    end
+
+    return AimPart
+end
+
+local function LockTarget()
+    LockedPart = nil
+
+    local mousePos = UserInputService:GetMouseLocation()
+    local unitRay = Camera:ScreenPointToRay(mousePos.X, mousePos.Y)
+
+    local rayResult = workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, RayParams)
+
+    if rayResult and rayResult.Instance then
+        local model = rayResult.Instance:FindFirstAncestorWhichIsA("Model")
+        if model then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            local targetPlr = Players:GetPlayerFromCharacter(model)
+            if hum and hum.Health > 0 and targetPlr and targetPlr ~= Player then
+                if not (targetPlr.Team == Player.Team and targetPlr.Team ~= nil) then
+                    local aimTarget = model:FindFirstChild(GetCurrentAimPart()) or model:FindFirstChild("HumanoidRootPart")
+                    if aimTarget and aimTarget:IsA("BasePart") then
+                        LockedPart = aimTarget
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
+    local closestPart = nil
+    local shortest = math.huge
+    local mouseScreen = UserInputService:GetMouseLocation()
+
+    for _, plr in next, Players:GetPlayers() do
+        if plr ~= Player and plr.Character then
+            local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 and not (plr.Team == Player.Team and plr.Team ~= nil) then
+                local part = plr.Character:FindFirstChild(GetCurrentAimPart()) or plr.Character:FindFirstChild("HumanoidRootPart")
+                if part and part:IsA("BasePart") then
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mouseScreen).Magnitude
+                        if dist < shortest then
+                            shortest = dist
+                            closestPart = part
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if closestPart then
+        LockedPart = closestPart
+        return true
+    end
+
+    return false
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Keybind or input.KeyCode == Keybind then
+        IsHoldingKey = true
+        if FeatureEnabled and not LockedPart then
+            LockTarget()
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Keybind or input.KeyCode == Keybind then
+        IsHoldingKey = false
+        LockedPart = nil
+    end
+end)
+
+local AimlockLoop = RunService.RenderStepped:Connect(function()
+    if not FeatureEnabled then return end
+    if not IsHoldingKey then return end
+    if not LockedPart or not LockedPart.Parent then return end
+
+    UpdateDynamicSmoothing()
+
+    local currentAimPartName = GetCurrentAimPart()
+    local targetPart = LockedPart.Parent:FindFirstChild(currentAimPartName)
+    if not targetPart or not targetPart:IsA("BasePart") then
+        targetPart = LockedPart.Parent:FindFirstChild("HumanoidRootPart")
+    end
+
+    if not targetPart then return end
+
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+    if not onScreen or screenPos.Z < 0 then return end
+
+    local mouseLoc = UserInputService:GetMouseLocation()
+
+    local moveDivisor = CurrentSmoothing / 5
+    local deltaX = (screenPos.X - mouseLoc.X) / moveDivisor
+    local deltaY = (screenPos.Y - mouseLoc.Y) / moveDivisor
+
+    if getfenv().mousemoverel then
+        getfenv().mousemoverel(deltaX, deltaY)
+    end
+end)
+
+-- GUI (minimal)
+Tab:CreateToggle({
+    Name = "Enable Aimlock",
+    CurrentValue = false,
+    Flag = "MasterToggle",
+    Callback = function(Value)
+        FeatureEnabled = Value
+        if not Value then
+            IsHoldingKey = false
+            LockedPart = nil
+        end
+    end,
+})
+
+Tab:CreateKeybind({
+    Name = "Aim Key (Hold)",
+    CurrentKeybind = "RightMouse",
+    HoldToInteract = true,
+    Flag = "AimKeybind",
+    Callback = function() end,
+})
+
+Tab:CreateSlider({
+    Name = "Base Smoothing",
+    Range = {1, 100},
+    Increment = 1,
+    CurrentValue = 40,
+    Flag = "SmoothingSlider",
+    Callback = function(Value)
+        BaseSmoothing = Value
+        CurrentSmoothing = Value
+    end,
+})
+
+Tab:CreateDropdown({
+    Name = "Aim Part",
+    Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Random"},
+    CurrentOption = {"Random"},
+    Flag = "AimPartDropdown",
+    Callback = function(Option)
+        local selected = Option[1]
+        if selected == "Random" then
+            UseRandomPart = true
+            AimPart = PossibleAimParts[math.random(1, #PossibleAimParts)]
+            LastRandomSwitch = tick()
+        else
+            UseRandomPart = false
+            AimPart = selected
+        end
+    end,
+})
+
+Window:OnDestroy(function()
+    if AimlockLoop then AimlockLoop:Disconnect() end
+end)
