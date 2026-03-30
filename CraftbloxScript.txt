@@ -1,7 +1,7 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
 
 local Window = Rayfield:CreateWindow({
-    Name = "aimlock",
+    Name = "Mouse Aimlock",
     LoadingTitle = "loading.",
     LoadingSubtitle = "",
     ConfigurationSaving = {
@@ -33,6 +33,8 @@ local AimPart         = "HumanoidRootPart"
 local UseRandomPart   = true         
 local LastRandomSwitch = 0
 local RANDOM_SWITCH_INTERVAL = 0.3
+
+local WallCheck       = false   -- New: Wall Check toggle
 
 local PossibleAimParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"}
 
@@ -68,6 +70,27 @@ local function GetCurrentAimPart()
     return AimPart
 end
 
+local function HasLineOfSight(targetPart)
+    if not WallCheck then return true end
+    if not targetPart then return false end
+
+    local origin = Camera.CFrame.Position
+    local direction = (targetPart.Position - origin)
+    local rayResult = workspace:Raycast(origin, direction, RayParams)
+
+    if rayResult and rayResult.Instance then
+        local hitModel = rayResult.Instance:FindFirstAncestorWhichIsA("Model")
+        if hitModel then
+            local hitPlayer = Players:GetPlayerFromCharacter(hitModel)
+            if hitPlayer and hitPlayer == Players:GetPlayerFromCharacter(targetPart.Parent) then
+                return true
+            end
+        end
+        return false
+    end
+    return true
+end
+
 local function LockTarget()
     LockedPart = nil
 
@@ -84,7 +107,7 @@ local function LockTarget()
             if hum and hum.Health > 0 and targetPlr and targetPlr ~= Player then
                 if not (targetPlr.Team == Player.Team and targetPlr.Team ~= nil) then
                     local aimTarget = model:FindFirstChild(GetCurrentAimPart()) or model:FindFirstChild("HumanoidRootPart")
-                    if aimTarget and aimTarget:IsA("BasePart") then
+                    if aimTarget and aimTarget:IsA("BasePart") and HasLineOfSight(aimTarget) then
                         LockedPart = aimTarget
                         return true
                     end
@@ -93,6 +116,7 @@ local function LockTarget()
         end
     end
 
+    -- Fallback with wall check
     local closestPart = nil
     local shortest = math.huge
     local mouseScreen = UserInputService:GetMouseLocation()
@@ -102,7 +126,7 @@ local function LockTarget()
             local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
             if humanoid and humanoid.Health > 0 and not (plr.Team == Player.Team and plr.Team ~= nil) then
                 local part = plr.Character:FindFirstChild(GetCurrentAimPart()) or plr.Character:FindFirstChild("HumanoidRootPart")
-                if part and part:IsA("BasePart") then
+                if part and part:IsA("BasePart") and HasLineOfSight(part) then
                     local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
                     if onScreen then
                         local dist = (Vector2.new(screenPos.X, screenPos.Y) - mouseScreen).Magnitude
@@ -171,7 +195,7 @@ local AimlockLoop = RunService.RenderStepped:Connect(function()
     end
 end)
 
--- GUI (minimal)
+-- GUI
 Tab:CreateToggle({
     Name = "Enable Aimlock",
     CurrentValue = false,
@@ -220,6 +244,16 @@ Tab:CreateDropdown({
             UseRandomPart = false
             AimPart = selected
         end
+    end,
+})
+
+-- New: Wall Check Toggle
+Tab:CreateToggle({
+    Name = "Wall Check",
+    CurrentValue = false,
+    Flag = "WallCheckToggle",
+    Callback = function(Value)
+        WallCheck = Value
     end,
 })
 
