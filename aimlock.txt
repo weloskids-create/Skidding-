@@ -23,7 +23,7 @@ local Camera = workspace.CurrentCamera
 
 local FeatureEnabled  = false
 local IsHoldingKey    = false
-local Keybind         = Enum.UserInputType.MouseButton2
+local Keybind         = Enum.UserInputType.MouseButton2  
 
 local LockedPart      = nil
 local BaseSmoothing   = 25           
@@ -40,7 +40,16 @@ local PossibleAimParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"
 
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
-RayParams.FilterDescendantsInstances = {Player.Character or Player.CharacterAdded:Wait()}
+
+local function updateRaycastFilter()
+    if Player.Character then
+        RayParams.FilterDescendantsInstances = {Player.Character}
+    end
+end
+
+-- Update filter 
+Player.CharacterAdded:Connect(updateRaycastFilter)
+updateRaycastFilter()  
 
 local lastVariationUpdate = 0
 local VARIATION_INTERVAL = 0.25
@@ -116,7 +125,7 @@ local function LockTarget()
         end
     end
 
-    -- fallback
+    -- fallback to closest visible target
     local closestPart = nil
     local shortest = math.huge
     local mouseScreen = UserInputService:GetMouseLocation()
@@ -166,6 +175,9 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
+-- universal aim
+local mousemoverelFunc = getfenv().mousemoverel or getgenv().mousemoverel
+
 local AimlockLoop = RunService.RenderStepped:Connect(function()
     if not FeatureEnabled then return end
     if not IsHoldingKey then return end
@@ -190,12 +202,12 @@ local AimlockLoop = RunService.RenderStepped:Connect(function()
     local deltaX = (screenPos.X - mouseLoc.X) / moveDivisor
     local deltaY = (screenPos.Y - mouseLoc.Y) / moveDivisor
 
-    if getfenv().mousemoverel then
-        getfenv().mousemoverel(deltaX, deltaY)
+    if mousemoverelFunc then
+        mousemoverelFunc(deltaX, deltaY)
     end
 end)
 
--- GUI
+-- GUI should be functional now
 Tab:CreateToggle({
     Name = "Enable Aimlock",
     CurrentValue = false,
@@ -214,14 +226,18 @@ Tab:CreateKeybind({
     CurrentKeybind = "RightMouse",
     HoldToInteract = true,
     Flag = "AimKeybind",
-    Callback = function() end,
+    Callback = function(newKey)  -- fixed ts
+        if newKey then
+            Keybind = newKey
+        end
+    end,
 })
 
 Tab:CreateSlider({
     Name = "Base Smoothing",
     Range = {1, 100},
     Increment = 1,
-    CurrentValue = 40,
+    CurrentValue = 25,  
     Flag = "SmoothingSlider",
     Callback = function(Value)
         BaseSmoothing = Value
@@ -247,7 +263,6 @@ Tab:CreateDropdown({
     end,
 })
 
--- wallcheck
 Tab:CreateToggle({
     Name = "Wall Check",
     CurrentValue = false,
