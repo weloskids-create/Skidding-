@@ -2,8 +2,8 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield', true))(
 
 local Window = Rayfield:CreateWindow({
     Name = "aimlock",
-    LoadingTitle = "loading.",
-    LoadingSubtitle = "",
+    LoadingTitle = "loading...",
+    LoadingSubtitle = " ",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "aimlockconfig",
@@ -21,6 +21,7 @@ local RunService       = game:GetService("RunService")
 local Player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+-- Aimlock Variables
 local FeatureEnabled  = false
 local IsHoldingKey    = false
 local Keybind         = Enum.UserInputType.MouseButton2  
@@ -34,7 +35,7 @@ local UseRandomPart   = true
 local LastRandomSwitch = 0
 local RANDOM_SWITCH_INTERVAL = 0.3
 
-local WallCheck       = false   
+local WallCheck       = false   -- ← Re-added
 
 local PossibleAimParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"}
 
@@ -47,7 +48,6 @@ local function updateRaycastFilter()
     end
 end
 
--- Update filter 
 Player.CharacterAdded:Connect(updateRaycastFilter)
 updateRaycastFilter()  
 
@@ -66,16 +66,12 @@ local function UpdateDynamicSmoothing()
 end
 
 local function GetCurrentAimPart()
-    if not UseRandomPart then
-        return AimPart
-    end
-
+    if not UseRandomPart then return AimPart end
     local now = tick()
     if now - LastRandomSwitch >= RANDOM_SWITCH_INTERVAL then
         AimPart = PossibleAimParts[math.random(1, #PossibleAimParts)]
         LastRandomSwitch = now
     end
-
     return AimPart
 end
 
@@ -125,12 +121,12 @@ local function LockTarget()
         end
     end
 
-    -- fallback to closest visible target
+    -- fallback to closest visible target (with wall check)
     local closestPart = nil
     local shortest = math.huge
     local mouseScreen = UserInputService:GetMouseLocation()
 
-    for _, plr in next, Players:GetPlayers() do
+    for _, plr in Players:GetPlayers() do
         if plr ~= Player and plr.Character then
             local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
             if humanoid and humanoid.Health > 0 and not (plr.Team == Player.Team and plr.Team ~= nil) then
@@ -153,7 +149,6 @@ local function LockTarget()
         LockedPart = closestPart
         return true
     end
-
     return false
 end
 
@@ -161,9 +156,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType == Keybind or input.KeyCode == Keybind then
         IsHoldingKey = true
-        if FeatureEnabled and not LockedPart then
-            LockTarget()
-        end
+        if FeatureEnabled and not LockedPart then LockTarget() end
     end
 end)
 
@@ -175,8 +168,122 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
--- universal aim
 local mousemoverelFunc = getfenv().mousemoverel or getgenv().mousemoverel
+
+-- ==================== SILHOUETTE ESP (Highlight + Name Tags) ====================
+
+local ESPEnabled = false
+local ShowNameTags = true
+local ESPOutlineColor = Color3.fromRGB(255, 165, 0)
+local ESPFillTransparency = 0.85
+
+local ESPHighlights = {}
+local NameTags = {}
+
+local function CreateESPForPlayer(plr)
+    if not plr.Character then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "SilhouetteESP"
+    highlight.Adornee = plr.Character
+    highlight.FillTransparency = ESPFillTransparency
+    highlight.OutlineColor = ESPOutlineColor
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = true
+    highlight.Parent = plr.Character
+
+    ESPHighlights[plr.UserId] = highlight
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "NameESP"
+    billboard.Adornee = plr.Character:FindFirstChild("Head") or plr.Character:FindFirstChild("HumanoidRootPart")
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.Enabled = ShowNameTags
+    billboard.Parent = plr.Character
+
+    local text = Instance.new("TextLabel")
+    text.Size = UDim2.new(1, 0, 1, 0)
+    text.BackgroundTransparency = 1
+    text.Text = plr.Name
+    text.TextColor3 = Color3.fromRGB(255, 255, 255)
+    text.TextStrokeTransparency = 0
+    text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    text.Font = Enum.Font.GothamBold
+    text.TextSize = 16
+    text.Parent = billboard
+
+    NameTags[plr.UserId] = billboard
+end
+
+local function UpdateESP()
+    if not ESPEnabled then return end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == Player then continue end
+
+        local char = plr.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+        if not char or not hum or hum.Health <= 0 then
+            if ESPHighlights[plr.UserId] then
+                ESPHighlights[plr.UserId]:Destroy()
+                ESPHighlights[plr.UserId] = nil
+            end
+            if NameTags[plr.UserId] then
+                NameTags[plr.UserId]:Destroy()
+                NameTags[plr.UserId] = nil
+            end
+            continue
+        end
+
+        if plr.Team == Player.Team and plr.Team ~= nil then
+            if ESPHighlights[plr.UserId] then ESPHighlights[plr.UserId].Enabled = false end
+            if NameTags[plr.UserId] then NameTags[plr.UserId].Enabled = false end
+            continue
+        end
+
+        if not ESPHighlights[plr.UserId] then
+            CreateESPForPlayer(plr)
+        else
+            local hl = ESPHighlights[plr.UserId]
+            if hl.Adornee ~= char then hl.Adornee = char end
+            hl.FillTransparency = ESPFillTransparency
+            hl.OutlineColor = ESPOutlineColor
+            hl.Enabled = true
+
+            if NameTags[plr.UserId] then
+                NameTags[plr.UserId].Enabled = ShowNameTags
+            end
+        end
+    end
+end
+
+local function ClearAllESP()
+    for _, hl in pairs(ESPHighlights) do if hl then hl:Destroy() end end
+    for _, tag in pairs(NameTags) do if tag then tag:Destroy() end end
+    ESPHighlights = {}
+    NameTags = {}
+end
+
+local ESPConnection
+local function StartESPLoop()
+    if ESPConnection then return end
+    ESPConnection = RunService.RenderStepped:Connect(UpdateESP)
+end
+
+local function StopESPLoop()
+    if ESPConnection then
+        ESPConnection:Disconnect()
+        ESPConnection = nil
+    end
+    ClearAllESP()
+end
+
+-- ==================== AIMLOCK LOOP ====================
 
 local AimlockLoop = RunService.RenderStepped:Connect(function()
     if not FeatureEnabled then return end
@@ -186,18 +293,13 @@ local AimlockLoop = RunService.RenderStepped:Connect(function()
     UpdateDynamicSmoothing()
 
     local currentAimPartName = GetCurrentAimPart()
-    local targetPart = LockedPart.Parent:FindFirstChild(currentAimPartName)
-    if not targetPart or not targetPart:IsA("BasePart") then
-        targetPart = LockedPart.Parent:FindFirstChild("HumanoidRootPart")
-    end
-
-    if not targetPart then return end
+    local targetPart = LockedPart.Parent:FindFirstChild(currentAimPartName) or LockedPart.Parent:FindFirstChild("HumanoidRootPart")
+    if not targetPart or not targetPart:IsA("BasePart") then return end
 
     local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
     if not onScreen or screenPos.Z < 0 then return end
 
     local mouseLoc = UserInputService:GetMouseLocation()
-
     local moveDivisor = CurrentSmoothing / 5
     local deltaX = (screenPos.X - mouseLoc.X) / moveDivisor
     local deltaY = (screenPos.Y - mouseLoc.Y) / moveDivisor
@@ -205,9 +307,12 @@ local AimlockLoop = RunService.RenderStepped:Connect(function()
     if mousemoverelFunc then
         mousemoverelFunc(deltaX, deltaY)
     end
+
+    UpdateESP()
 end)
 
--- GUI should be functional now
+-- ==================== GUI ====================
+
 Tab:CreateToggle({
     Name = "Enable Aimlock",
     CurrentValue = false,
@@ -226,10 +331,8 @@ Tab:CreateKeybind({
     CurrentKeybind = "RightMouse",
     HoldToInteract = true,
     Flag = "AimKeybind",
-    Callback = function(newKey)  -- fixed ts
-        if newKey then
-            Keybind = newKey
-        end
+    Callback = function(newKey)
+        Keybind = newKey or Enum.UserInputType.MouseButton2
     end,
 })
 
@@ -237,7 +340,7 @@ Tab:CreateSlider({
     Name = "Base Smoothing",
     Range = {1, 100},
     Increment = 1,
-    CurrentValue = 25,  
+    CurrentValue = 25,
     Flag = "SmoothingSlider",
     Callback = function(Value)
         BaseSmoothing = Value
@@ -245,26 +348,11 @@ Tab:CreateSlider({
     end,
 })
 
-Tab:CreateDropdown({
-    Name = "Aim Part",
-    Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Random"},
-    CurrentOption = {"Random"},
-    Flag = "AimPartDropdown",
-    Callback = function(Option)
-        local selected = Option[1]
-        if selected == "Random" then
-            UseRandomPart = true
-            AimPart = PossibleAimParts[math.random(1, #PossibleAimParts)]
-            LastRandomSwitch = tick()
-        else
-            UseRandomPart = false
-            AimPart = selected
-        end
-    end,
-})
+-- Wall Check Section (Re-added)
+local ChecksSection = Tab:CreateSection("Checks")
 
 Tab:CreateToggle({
-    Name = "Wall Check",
+    Name = "Wall Check (Aim Only)",
     CurrentValue = false,
     Flag = "WallCheckToggle",
     Callback = function(Value)
@@ -272,6 +360,65 @@ Tab:CreateToggle({
     end,
 })
 
-Window:OnDestroy(function()
+-- ESP Section
+local ESPSection = Tab:CreateSection("ESP")
+
+Tab:CreateToggle({
+    Name = "Enable Chams",
+    CurrentValue = false,
+    Flag = "ESPOutlineToggle",
+    Callback = function(Value)
+        ESPEnabled = Value
+        if Value then
+            StartESPLoop()
+        else
+            StopESPLoop()
+        end
+    end,
+})
+
+Tab:CreateToggle({
+    Name = "Show Name Tags",
+    CurrentValue = true,
+    Flag = "NameTagToggle",
+    Callback = function(Value)
+        ShowNameTags = Value
+        for _, tag in pairs(NameTags) do
+            if tag then tag.Enabled = Value end
+        end
+    end,
+})
+
+Tab:CreateColorPicker({
+    Name = "Outline Color",
+    Color = Color3.fromRGB(255, 165, 0),
+    Flag = "ESPOutlineColor",
+    Callback = function(Value)
+        ESPOutlineColor = Value
+        for _, hl in pairs(ESPHighlights) do
+            if hl then hl.OutlineColor = Value end
+        end
+    end,
+})
+
+Tab:CreateSlider({
+    Name = "Filler (Inner Shade Amount)",
+    Range = {0, 100},
+    Increment = 1,
+    CurrentValue = 15,
+    Flag = "FillPercentage",
+    Callback = function(Value)
+        ESPFillTransparency = (100 - Value) / 100
+        for _, hl in pairs(ESPHighlights) do
+            if hl then hl.FillTransparency = ESPFillTransparency end
+        end
+    end,
+})
+
+
+
+-- Cleanup
+game:BindToClose(function()
+    StopESPLoop()
     if AimlockLoop then AimlockLoop:Disconnect() end
 end)
