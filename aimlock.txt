@@ -367,7 +367,7 @@ Tab:CreateSection("ESP Settings")
 
 Tab:CreateToggle({
     Name = "Enable ESP",
-    CurrentValue = false,
+    CurrentValue = true,
     Flag = "ESP Toggle",
     Callback = function(Value)
         ESPEnabled = Value
