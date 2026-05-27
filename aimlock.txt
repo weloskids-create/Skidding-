@@ -1,4 +1,3 @@
-
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
 
 local Window = Rayfield:CreateWindow({
@@ -14,7 +13,7 @@ local Window = Rayfield:CreateWindow({
 
 local Tab = Window:CreateTab("Main", 4483362458)
 
--- Services
+-- services
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService       = game:GetService("RunService")
@@ -22,7 +21,7 @@ local RunService       = game:GetService("RunService")
 local Player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- State Variables
+-- variables
 local FeatureEnabled  = false
 local IsHoldingKey    = false
 local Keybind         = Enum.UserInputType.MouseButton2  
@@ -39,7 +38,7 @@ local WallCheck       = false
 
 local PossibleAimParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"}
 
--- Raycast Setup
+-- ray
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -52,7 +51,7 @@ end
 Player.CharacterAdded:Connect(updateRaycastFilter)
 updateRaycastFilter()  
 
--- Dynamic Smoothing Logic
+-- dynamic smoothing
 local lastVariationUpdate = 0
 local VARIATION_INTERVAL = 0.25
 local EXTRA_MIN = 5
@@ -98,7 +97,7 @@ local function HasLineOfSight(targetPart)
     return true
 end
 
--- Targeting Logic
+-- target logic
 local function LockTarget()
     LockedPart = nil
     local mousePos = UserInputService:GetMouseLocation()
@@ -149,7 +148,7 @@ local function LockTarget()
     return false
 end
 
--- Input Listeners
+-- input
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType == Keybind or input.KeyCode == Keybind then
@@ -168,7 +167,7 @@ end)
 
 local mousemoverelFunc = getfenv().mousemoverel or getgenv().mousemoverel
 
--- Main Aimlock Loop
+-- main aimlock loop
 local AimlockLoop = RunService.RenderStepped:Connect(function()
     if not FeatureEnabled or not IsHoldingKey or not LockedPart or not LockedPart.Parent then return end
 
@@ -191,7 +190,7 @@ local AimlockLoop = RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ==================== ESP SYSTEM ====================
+-- esp sys
 local ESPEnabled = false
 local ShowNameTags = false
 local ESPOutlineColor = Color3.fromRGB(255, 165, 0)
@@ -204,7 +203,6 @@ local function CreateESPForPlayer(plr)
     local char = plr.Character
     if not char then return end
 
-    -- Check if Highlight needs to be created or re-applied (Fixes Respawn)
     if not ESPHighlights[plr.UserId] or ESPHighlights[plr.UserId].Parent ~= char then
         if ESPHighlights[plr.UserId] then ESPHighlights[plr.UserId]:Destroy() end
         
@@ -219,7 +217,6 @@ local function CreateESPForPlayer(plr)
         ESPHighlights[plr.UserId] = highlight
     end
 
-    -- Check if NameTag needs to be created or re-applied
     if ShowNameTags then
         if not NameTags[plr.UserId] or NameTags[plr.UserId].Parent ~= char then
             if NameTags[plr.UserId] then NameTags[plr.UserId]:Destroy() end
@@ -263,7 +260,7 @@ end)
 
 RunService.RenderStepped:Connect(UpdateESP)
 
--- ==================== UI CONSTRUCTION ====================
+-- UI
 
 Tab:CreateToggle({
     Name = "Enable Aimlock",
@@ -385,11 +382,4 @@ Window:OnDestroy(function()
     if AimlockLoop then AimlockLoop:Disconnect() end
 end)
 
-Rayfield:Notify({
-    Title = "Script Loaded",
-    Content = "Aimlock & ESP ready.",
-    Duration = 3
-})
-
-
-print("bro github update my shit")
+-- github update my shi 🥺
