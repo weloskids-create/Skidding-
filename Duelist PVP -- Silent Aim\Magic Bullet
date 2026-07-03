@@ -1,0 +1,97 @@
+-- credits to @deaggilisspees on scriptblox for the original script
+-- this works about 90% of the time
+
+local Plrs = game:GetService("Players")
+local LclPlr = Plrs.LocalPlayer
+local Cam = workspace.CurrentCamera
+local Mse = LclPlr:GetMouse()
+
+local function Loop()
+    warn("Starting...")
+
+    local function GetTgt()
+        local Tgt, Dist = nil, math.huge
+        for _, Plr in Plrs:GetPlayers() do
+            if Plr == LclPlr or not Plr.Character then
+                continue
+            end
+            local Head = Plr.Character:FindFirstChild("Head")
+            local Hum = Plr.Character:FindFirstChild("Humanoid")
+            if not Head or not Hum or Hum.Health <= 0 then
+                continue
+            end
+            local Pos, OnScr = Cam:WorldToViewportPoint(Head.Position)
+            if not OnScr then
+                continue
+            end
+            local D = (Vector2.new(Mse.X, Mse.Y) - Vector2.new(Pos.X, Pos.Y)).Magnitude
+            if D < Dist then
+                Dist = D
+                Tgt = Head
+            end
+        end
+        return Tgt
+    end
+
+    local RayFn
+    for _, Fn in getgc(true) do
+        if typeof(Fn) == "function" and debug.info(Fn, "l") == 3162 and #debug.getupvalues(Fn) == 4 then
+            RayFn = Fn
+            break
+        end
+    end
+
+    if not RayFn then
+        warn("Failed to find RayFn.")
+        return
+    end
+
+    local ShootFn
+    for _, Fn in getgc(true) do
+        if typeof(Fn) == "function" and debug.info(Fn, "l") == 3225 then
+            for Key, Value in debug.getupvalues(Fn) do
+                if Value == RayFn then
+                    ShootFn = Fn
+                    break
+                end
+            end
+        end
+        if ShootFn then
+            break
+        end
+    end
+
+    if not ShootFn then
+        warn("Failed to find ShootFn.")
+        return
+    end
+
+    local OldRay = debug.getupvalue(ShootFn, 21)
+
+    if not OldRay then
+        warn("Failed to get ray function.")
+        return
+    end
+
+    debug.setupvalue(ShootFn, 21, function(Spread, Origin)
+        local Tgt = GetTgt()
+        if Tgt then
+            return {
+                Position = Tgt.Position,
+                Normal = Vector3.new(0, 1, 0),
+                Distance = 1,
+                Instance = Tgt
+            }
+        end
+        return OldRay(Spread, Origin)
+    end)
+
+    warn("Done!")
+end
+
+Loop()
+while true do
+    LclPlr.CharacterAdded:Wait()
+    task.wait(1)
+    Loop()
+end
