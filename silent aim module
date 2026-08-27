@@ -1,4 +1,4 @@
--- 1.0.0.2
+-- 1.0.0.3
 
 local cloneref = (type(cloneref) == "function") and cloneref or function(x) return x end
 local function svc(n)
@@ -114,23 +114,43 @@ local function resolveTargetPart(char, preferred)
         or char:FindFirstChild("Head")
 end
 
--- Re-entry guard: prevents our own hook from firing while we're already processing it.
--- Without this, any Workspace method called inside the hook (e.g. VisibleCheck's Raycast)
--- would re-trigger __namecall → getClosestTarget → VisibleCheck → Raycast → hook → infinite recursion → crash.
 local _hookGuard = false
 
 local oldNamecall = nil
 local oldIndex    = nil
 
-local function safeRaycast(origin, direction, params)
-    local result = nil
-    local wasGuarded = _hookGuard
-    _hookGuard = true
-    pcall(function()
-        result = oldNamecall(RealWorkspace, origin, direction, params)
-    end)
-    _hookGuard = wasGuarded
-    return result
+local function isWeaponRay(origin)
+    if typeof(origin) ~= "Vector3" then return false end
+
+    local cam = getCamera()
+    if cam then
+        local camPos = cam.CFrame.Position
+        if (origin - camPos).Magnitude <= 20 then
+            return true
+        end
+    end
+
+    if LocalPlayer and LocalPlayer.Character then
+        local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp and (origin - hrp.Position).Magnitude <= 12 then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function isAimedNearMouse(origin, direction)
+    local cam = getCamera()
+    if not cam then return true end
+
+    local mousePos  = UserInputService:GetMouseLocation()
+    local mouseRay  = cam:ViewportPointToRay(mousePos.X, mousePos.Y)
+    local rayDir    = direction.Unit
+    local mouseDir  = mouseRay.Direction.Unit
+
+    local dot = rayDir:Dot(mouseDir)
+    return dot >= math.cos(math.rad(25))
 end
 
 local function passesValidation(targetPlr, char)
@@ -176,8 +196,15 @@ local function passesValidation(targetPlr, char)
 
                 local origin = cam.CFrame.Position
                 local dir    = part.Position - origin
-                -- Use safeRaycast which sets _hookGuard to prevent re-entry
-                local result = safeRaycast(origin, dir, rayParams)
+
+                local result = nil
+                local wasGuard = _hookGuard
+                _hookGuard = true
+                pcall(function()
+                    result = oldNamecall(RealWorkspace, origin, dir, rayParams)
+                end)
+                _hookGuard = wasGuard
+
                 if result and result.Instance and not result.Instance:IsDescendantOf(char) then
                     return false
                 end
@@ -200,10 +227,10 @@ local function getClosestTarget()
     local cam = getCamera()
     if not cam then return nil, nil end
 
-    local mousePos    = UserInputService:GetMouseLocation()
+    local mousePos     = UserInputService:GetMouseLocation()
     local shortestDist = SilentAim.FOVRadius or 150
-    local closestPlr  = nil
-    local closestPart = nil
+    local closestPlr   = nil
+    local closestPart  = nil
 
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
@@ -230,12 +257,11 @@ local function getClosestTarget()
     return closestPlr, closestPart
 end
 
--- Per-frame cache: same target + hit roll is shared across all ray hooks in one frame.
-local _frameCounter  = 0
-local _cachedFrame   = 0
-local _cachedTarget  = nil
-local _cachedPart    = nil
-local _cachedRoll    = false
+local _frameCounter = 0
+local _cachedFrame  = 0
+local _cachedTarget = nil
+local _cachedPart   = nil
+local _cachedRoll   = false
 
 local function resolveFrameTarget()
     if _cachedFrame == _frameCounter then
@@ -275,11 +301,11 @@ RunService.RenderStepped:Connect(function()
     if fovCircle then
         if SilentAim.Enabled and SilentAim.FOVVisible then
             local mousePos = UserInputService:GetMouseLocation()
-            fovCircle.Position    = mousePos
-            fovCircle.Radius      = SilentAim.FOVRadius or 150
-            fovCircle.Color       = SilentAim.FOVColor or Color3.fromRGB(255, 255, 255)
+            fovCircle.Position     = mousePos
+            fovCircle.Radius       = SilentAim.FOVRadius or 150
+            fovCircle.Color        = SilentAim.FOVColor or Color3.fromRGB(255, 255, 255)
             fovCircle.Transparency = SilentAim.FOVTransparency or 0.6
-            fovCircle.Visible     = true
+            fovCircle.Visible      = true
         else
             fovCircle.Visible = false
         end
@@ -292,9 +318,7 @@ local function hookMetamethods()
     end
 
     oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-        -- Re-entry guard: if we're already inside hook processing, pass straight through.
-        -- This prevents VisibleCheck's Raycast (and any other internal Workspace call)
-        -- from recursively re-triggering the hook and causing a stack overflow crash.
+
         if _hookGuard then
             return oldNamecall(self, ...)
         end
@@ -309,33 +333,38 @@ local function hookMetamethods()
                 or method == "FindPartOnRayWithIgnoreList"
                 or method == "FindPartOnRayWithWhitelist" then
 
-                _hookGuard = true
-                local shouldHit, _, targetPart = resolveFrameTarget()
-                _hookGuard = false
+                local args = {...}
 
-                if shouldHit and targetPart then
-                    local args = {...}
+                local origin, direction
+                if method == "Raycast" then
+                    origin    = args[1]
+                    direction = args[2]
+                else
+                    local ray = args[1]
+                    if typeof(ray) == "Ray" then
+                        origin    = ray.Origin
+                        direction = ray.Direction
+                    end
+                end
 
-                    if method == "Raycast" then
-                        local origin    = args[1]
-                        local direction = args[2]
-                        if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-                            local mag = direction.Magnitude
-                            if mag > 0 then
-                                local targetPos = getPredictedPosition(targetPart)
-                                if targetPos then
+                if isWeaponRay(origin) and isAimedNearMouse(origin, direction or Vector3.zero) then
+                    _hookGuard = true
+                    local shouldHit, _, targetPart = resolveFrameTarget()
+                    _hookGuard = false
+
+                    if shouldHit and targetPart then
+                        local targetPos = getPredictedPosition(targetPart)
+                        if targetPos then
+                            if method == "Raycast" then
+                                local mag = direction and direction.Magnitude or 0
+                                if mag > 0 then
                                     args[2] = (targetPos - origin).Unit * mag
                                     return oldNamecall(self, unpack(args))
                                 end
-                            end
-                        end
-                    else
-                        local ray = args[1]
-                        if typeof(ray) == "Ray" then
-                            local mag = ray.Direction.Magnitude
-                            if mag > 0 then
-                                local targetPos = getPredictedPosition(targetPart)
-                                if targetPos then
+                            else
+                                local ray = args[1]
+                                local mag = ray.Direction.Magnitude
+                                if mag > 0 then
                                     args[1] = Ray.new(ray.Origin, (targetPos - ray.Origin).Unit * mag)
                                     return oldNamecall(self, unpack(args))
                                 end
@@ -350,26 +379,39 @@ local function hookMetamethods()
     end))
 
     oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, index)
+        if _hookGuard then
+            return oldIndex(self, index)
+        end
+
         if not checkcaller() and SilentAim.Enabled then
             local mouse = getMouse()
             if mouse and rawequal(self, mouse) then
                 if index == "Hit" or index == "Target" then
-                    _hookGuard = true
-                    local shouldHit, _, targetPart = resolveFrameTarget()
-                    _hookGuard = false
-                    if shouldHit and targetPart then
-                        local targetPos = getPredictedPosition(targetPart)
-                        if targetPos then
-                            if index == "Hit" then
-                                return CFrame.new(targetPos)
-                            else
-                                return targetPart
+                    local firing = false
+                    pcall(function()
+                        firing = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                    end)
+
+                    if firing then
+                        _hookGuard = true
+                        local shouldHit, _, targetPart = resolveFrameTarget()
+                        _hookGuard = false
+
+                        if shouldHit and targetPart then
+                            local targetPos = getPredictedPosition(targetPart)
+                            if targetPos then
+                                if index == "Hit" then
+                                    return CFrame.new(targetPos)
+                                else
+                                    return targetPart
+                                end
                             end
                         end
                     end
                 end
             end
         end
+
         return oldIndex(self, index)
     end))
 end
