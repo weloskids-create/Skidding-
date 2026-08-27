@@ -1,3 +1,5 @@
+-- github bro pls update my shit
+
 local cloneref = (type(cloneref) == "function") and cloneref or function(x) return x end
 local hookfunc = hookfunction or (type(hookmetamethod) == "function" and function(a, b) return hookmetamethod(game, a, b) end)
 local newccl = newcclosure or function(f) return f end
