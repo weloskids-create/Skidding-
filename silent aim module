@@ -1,3 +1,14 @@
+--[[
+    UX_SilentAim.lua
+    Standalone silent aim module — loaded via loadstring() from UltimateX.lua
+    Hooks ALL ray-casting methods to silently redirect shots toward the best target.
+
+    Exposed global (via getgenv): UX_SilentAim
+        .Config       — live-editable settings table
+        .Cleanup()    — disconnects hooks and destroys drawings
+        .Active       — bool, true if module is loaded and hooks are live
+]]
+
 local cloneref = (type(cloneref) == "function") and cloneref or function(x) return x end
 local hookfunction = hookfunction or (type(hookmetamethod) == "function" and function(a, b)
     return hookmetamethod(game, a, b)
@@ -5,6 +16,7 @@ end) or error("Silent Aim requires hookfunction or hookmetamethod")
 local newcclosure = newcclosure or function(f) return f end
 local checkcaller  = checkcaller or function() return false end
 
+-- ─── Services ────────────────────────────────────────────────────────────────
 local Players     = cloneref(game:GetService("Players"))
 local RunService  = cloneref(game:GetService("RunService"))
 local UserInputService = cloneref(game:GetService("UserInputService"))
@@ -12,28 +24,31 @@ local Camera      = workspace.CurrentCamera
 
 local lplr        = Players.LocalPlayer
 
+-- ─── RNG ─────────────────────────────────────────────────────────────────────
 local rand = Random.new()
 
+-- ─── Config (editable at runtime by the UI) ──────────────────────────────────
 local Config = {
     Enabled         = false,
-
-    FOV             = 120,  
-    TargetPart      = "HumanoidRootPart",  
-    HeadshotChance  = 0, 
-    HitChance       = 100,
+    -- Target selection
+    FOV             = 120,           -- radius in pixels from cursor
+    TargetPart      = "HumanoidRootPart",  -- "HumanoidRootPart" | "Head"
+    HeadshotChance  = 0,             -- 0-100 %
+    HitChance       = 100,           -- 0-100 %
     TeamCheck       = false,
     WallCheck       = true,
-
+    -- Wallbang (ignore walls)
     Wallbang        = false,
-
+    -- Prediction
     PredictEnabled  = false,
-    BulletSpeed     = 300, 
-
+    BulletSpeed     = 300,           -- studs/s, used for prediction lead
+    -- Visualiser
     ShowFOV         = false,
     FOVColor        = Color3.fromRGB(255, 255, 255),
     FOVThickness    = 1,
 }
 
+-- ─── Drawing circle (FOV ring) ────────────────────────────────────────────────
 local hasDrawing = false
 local fovCircle  = nil
 pcall(function()
@@ -73,6 +88,7 @@ end
 
 createFOVCircle()
 
+-- ─── FOV update loop ─────────────────────────────────────────────────────────
 local fovRenderConn = RunService.RenderStepped:Connect(function()
     if not fovCircle then return end
     if not Config.Enabled or not Config.ShowFOV then
@@ -87,6 +103,7 @@ local fovRenderConn = RunService.RenderStepped:Connect(function()
     fovCircle.Visible   = true
 end)
 
+-- ─── Wall-check ───────────────────────────────────────────────────────────────
 local wallParams = RaycastParams.new()
 wallParams.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -100,9 +117,10 @@ local function isVisible(origin, targetPos, character)
         Camera,
     }
     local result = workspace:Raycast(origin, dir.Unit * dist, wallParams)
-    return not result
+    return not result  -- no obstruction
 end
 
+-- ─── Prediction ──────────────────────────────────────────────────────────────
 local function predictPosition(targetPart, origin)
     if not Config.PredictEnabled then
         return targetPart.Position
@@ -113,6 +131,7 @@ local function predictPosition(targetPart, origin)
     return targetPart.Position + vel * tof
 end
 
+-- ─── Target selection ────────────────────────────────────────────────────────
 local function getMousePos()
     if UserInputService.TouchEnabled then
         return Camera.ViewportSize / 2
@@ -137,12 +156,14 @@ local function getTarget(rayOrigin)
         if not hum or hum.Health <= 0 then continue end
         if char:FindFirstChildOfClass("ForceField") then continue end
 
+        -- Team check
         if Config.TeamCheck and lplr.Team and plr.Team
             and plr.Team == lplr.Team
             and #plr.Team:GetPlayers() ~= #Players:GetPlayers() then
             continue
         end
 
+        -- Pick headshot vs body
         local partName = Config.TargetPart
         if rand:NextNumber(0, 100) < Config.HeadshotChance then
             partName = "Head"
@@ -152,11 +173,13 @@ local function getTarget(rayOrigin)
 
         local predPos = predictPosition(part, rayOrigin)
 
+        -- Wall check
         local origin3 = rayOrigin or Camera.CFrame.Position
         if not Config.Wallbang and not isVisible(origin3, predPos, char) then
             continue
         end
 
+        -- FOV / screen distance check
         local screenPos, onScreen = Camera:WorldToViewportPoint(predPos)
         if not onScreen then continue end
         local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
@@ -171,6 +194,7 @@ local function getTarget(rayOrigin)
     return bestPart, predictPosition(bestPart, rayOrigin or Camera.CFrame.Position)
 end
 
+-- ─── Hook storage (originals saved for unhooking) ────────────────────────────
 local hooks = {}
 
 local function safeHook(object, methodName, newFunc)
@@ -183,6 +207,7 @@ local function safeHook(object, methodName, newFunc)
         return hooked
     end)
     if not ok then
+        -- fallback: try hookmetamethod-style
         pcall(function()
             local orig = object[methodName]
             hooks[#hooks + 1] = { original = orig, object = object, method = methodName }
@@ -197,9 +222,11 @@ local function safeHook(object, methodName, newFunc)
     end
 end
 
+-- ─── Shared whitelist RaycastParams (Wallbang passthrough) ───────────────────
 local wallbangParams = RaycastParams.new()
 wallbangParams.FilterType = Enum.RaycastFilterType.Include
 
+-- ─── 1. workspace:Raycast ────────────────────────────────────────────────────
 local origRaycast = workspace.Raycast
 hooks[#hooks + 1] = {
     original = origRaycast,
@@ -220,6 +247,7 @@ hooks[#hooks + 1] = {
     end))
 }
 
+-- ─── 2. workspace:FindPartOnRay ──────────────────────────────────────────────
 local origFPOR = workspace.FindPartOnRay
 hooks[#hooks + 1] = {
     original = origFPOR,
@@ -239,6 +267,7 @@ hooks[#hooks + 1] = {
     end))
 }
 
+-- ─── 3. workspace:FindPartOnRayWithIgnoreList ─────────────────────────────────
 local origFPORWIL = workspace.FindPartOnRayWithIgnoreList
 hooks[#hooks + 1] = {
     original = origFPORWIL,
@@ -258,6 +287,7 @@ hooks[#hooks + 1] = {
     end))
 }
 
+-- ─── 4. workspace:FindPartOnRayWithWhitelist ──────────────────────────────────
 local origFPORWWL = workspace.FindPartOnRayWithWhitelist
 hooks[#hooks + 1] = {
     original = origFPORWWL,
@@ -277,6 +307,7 @@ hooks[#hooks + 1] = {
     end))
 }
 
+-- ─── 5. Camera:ScreenPointToRay ──────────────────────────────────────────────
 local origSPTR = Camera.ScreenPointToRay
 hooks[#hooks + 1] = {
     original = origSPTR,
@@ -290,6 +321,7 @@ hooks[#hooks + 1] = {
     end))
 }
 
+-- ─── 6. Camera:ViewportPointToRay ────────────────────────────────────────────
 local origVPTR = Camera.ViewportPointToRay
 hooks[#hooks + 1] = {
     original = origVPTR,
@@ -303,9 +335,11 @@ hooks[#hooks + 1] = {
     end))
 }
 
+-- ─── Cleanup ─────────────────────────────────────────────────────────────────
 local function Cleanup()
+    -- Disconnect FOV render loop
     pcall(function() fovRenderConn:Disconnect() end)
-
+    -- Restore all hooked functions
     for _, h in ipairs(hooks) do
         pcall(function()
             if h.restore then
@@ -314,9 +348,9 @@ local function Cleanup()
         end)
     end
     table.clear(hooks)
-
+    -- Destroy FOV circle
     destroyFOVCircle()
-
+    -- Clear genv
     pcall(function()
         if type(getgenv) == "function" then
             getgenv().UX_SilentAim = nil
@@ -324,6 +358,7 @@ local function Cleanup()
     end)
 end
 
+-- ─── Export to genv ──────────────────────────────────────────────────────────
 pcall(function()
     if type(getgenv) == "function" then
         -- Clean up any prior instance first
