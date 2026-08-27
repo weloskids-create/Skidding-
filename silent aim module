@@ -278,6 +278,10 @@ local function hookAllMethods()
                 restore = hookfunc(origSPTR, newccl(function(self, x, y, depth, ...)
                     local ray = origSPTR(self, x, y, depth, ...)
                     if not Config.Enabled or checkc() then return ray end
+                    local mPos = getMousePos()
+                    if math.abs(x - mPos.X) > 40 or math.abs(y - mPos.Y) > 40 then
+                        return ray
+                    end
                     local targetPart, predPos = getTarget(ray.Origin)
                     if not targetPart then return ray end
                     return Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
@@ -294,6 +298,10 @@ local function hookAllMethods()
                 restore = hookfunc(origVPTR, newccl(function(self, x, y, depth, ...)
                     local ray = origVPTR(self, x, y, depth, ...)
                     if not Config.Enabled or checkc() then return ray end
+                    local mPos = getMousePos()
+                    if math.abs(x - mPos.X) > 40 or math.abs(y - mPos.Y) > 40 then
+                        return ray
+                    end
                     local targetPart, predPos = getTarget(ray.Origin)
                     if not targetPart then return ray end
                     return Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
@@ -364,10 +372,15 @@ local function hookAllMethods()
                     elseif self == Camera then
                         if method == "ScreenPointToRay" or method == "ViewportPointToRay" then
                             local ray = oldNamecall(self, ...)
-                            if typeof(ray) == "Ray" then
-                                local targetPart, predPos = getTarget(ray.Origin)
-                                if targetPart then
-                                    return Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
+                            local x = args[1]
+                            local y = args[2]
+                            if typeof(ray) == "Ray" and typeof(x) == "number" and typeof(y) == "number" then
+                                local mPos = getMousePos()
+                                if math.abs(x - mPos.X) <= 40 and math.abs(y - mPos.Y) <= 40 then
+                                    local targetPart, predPos = getTarget(ray.Origin)
+                                    if targetPart then
+                                        return Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
+                                    end
                                 end
                             end
                             return ray
