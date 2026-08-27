@@ -1,4 +1,5 @@
--- v1
+-- v1.0.0.1
+
 local cloneref = (type(cloneref) == "function") and cloneref or function(x) return x end
 local function svc(n)
     local s = nil
@@ -6,35 +7,47 @@ local function svc(n)
     return s or game:GetService(n)
 end
 
-local Players = svc("Players")
-local Workspace = svc("Workspace")
-local RunService = svc("RunService")
-local UserInputService = svc("UserInputService")
-local GuiService = svc("GuiService")
+local unpack = table.unpack or unpack
 
+local Players      = svc("Players")
+local RunService   = svc("RunService")
+local UserInputService = svc("UserInputService")
+
+local RealWorkspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
-local Mouse = LocalPlayer and LocalPlayer:GetMouse()
+local Camera = RealWorkspace.CurrentCamera
+
+local function getCamera()
+    Camera = RealWorkspace.CurrentCamera
+    return Camera
+end
+
+local function getMouse()
+    if not LocalPlayer then return nil end
+    local m = nil
+    pcall(function() m = LocalPlayer:GetMouse() end)
+    return m
+end
 
 local SilentAim = {
     Enabled = false,
     HitChance = 100,
     TargetPart = "Head",
-    
+
     FOVRadius = 150,
     FOVVisible = false,
     FOVColor = Color3.fromRGB(255, 255, 255),
     FOVTransparency = 0.6,
-    
+
     TeamCheck = false,
     AliveCheck = true,
     ForcefieldCheck = false,
     VisibleCheck = false,
     GodModeCheck = false,
-    
+
     Prediction = false,
     PredictionAmount = 0.135,
-    
+
     SelectedTarget = nil,
     SelectedPart = nil,
 }
@@ -80,91 +93,121 @@ local function resolveTargetPart(char, preferred)
             currentRandomPart = randomParts[math.random(1, #randomParts)]
             lastRandomUpdate = tick()
         end
-        return char:FindFirstChild(currentRandomPart) or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+        return char:FindFirstChild(currentRandomPart)
+            or char:FindFirstChild("HumanoidRootPart")
+            or char:FindFirstChild("Head")
     end
-    
-    local clean = preferred
-    if clean == "Torso" then
-        return char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("LowerTorso") or char:FindFirstChild("HumanoidRootPart")
-    elseif clean == "Upper Torso" then
-        return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
-    elseif clean == "Lower Torso" then
-        return char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+    if preferred == "Torso" then
+        return char:FindFirstChild("Torso")
+            or char:FindFirstChild("UpperTorso")
+            or char:FindFirstChild("LowerTorso")
+            or char:FindFirstChild("HumanoidRootPart")
+    elseif preferred == "Upper Torso" then
+        return char:FindFirstChild("UpperTorso")
+            or char:FindFirstChild("Torso")
+            or char:FindFirstChild("HumanoidRootPart")
+    elseif preferred == "Lower Torso" then
+        return char:FindFirstChild("LowerTorso")
+            or char:FindFirstChild("Torso")
+            or char:FindFirstChild("HumanoidRootPart")
     end
-    
-    return char:FindFirstChild(clean) or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+    return char:FindFirstChild(preferred)
+        or char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("Head")
+end
+
+-- Cached per-frame state to avoid redundant target searches and ensure
+-- consistent hit chance results across multiple ray hooks in the same frame.
+local _cachedFrame = -1
+local _cachedTarget = nil
+local _cachedPart = nil
+local _cachedRoll = false
+
+local oldNamecall = nil
+
+local function visibleCheck(char, targetPart)
+    local cam = getCamera()
+    if not cam then return true end
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local filterList = {cam}
+    if LocalPlayer.Character then
+        table.insert(filterList, LocalPlayer.Character)
+    end
+    rayParams.FilterDescendantsInstances = filterList
+    rayParams.IgnoreWater = true
+
+    local origin = cam.CFrame.Position
+    local dir = targetPart.Position - origin
+    -- Call through oldNamecall directly to avoid re-entering our hook
+    local result = nil
+    pcall(function()
+        result = oldNamecall(RealWorkspace, dir, RaycastParams.new())
+    end)
+    -- Use rawcast via workspace methods directly to bypass our own hook
+    pcall(function()
+        result = RealWorkspace:Raycast(origin, dir, rayParams)
+    end)
+    if result and result.Instance and not result.Instance:IsDescendantOf(char) then
+        return false
+    end
+    return true
 end
 
 local function passesValidation(targetPlr, char)
     if not targetPlr or targetPlr == LocalPlayer or not char then return false end
-    
-    if SilentAim.TeamCheck and LocalPlayer.Team and targetPlr.Team and targetPlr.Team == LocalPlayer.Team then
-        return false
+
+    if SilentAim.TeamCheck then
+        if LocalPlayer.Team and targetPlr.Team and targetPlr.Team == LocalPlayer.Team then
+            return false
+        end
     end
-    
+
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
-    
+
     if SilentAim.AliveCheck and hum.Health <= 0 then
         return false
     end
-    
+
     if SilentAim.ForcefieldCheck and char:FindFirstChildOfClass("ForceField") then
         return false
     end
-    
+
     if SilentAim.GodModeCheck then
         local hp = tostring(hum.Health)
         if hp == "inf" or hp:lower() == "nan" or hum.Health >= 1e18 then
             return false
         end
     end
-    
+
     if SilentAim.VisibleCheck then
-        local targetPart = resolveTargetPart(char, SilentAim.TargetPart)
-        if targetPart then
-            local rayParams = RaycastParams.new()
-            rayParams.FilterType = Enum.RaycastFilterType.Exclude
-            rayParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
-            rayParams.IgnoreWater = true
-            
-            local origin = Camera.CFrame.Position
-            local dir = (targetPart.Position - origin)
-            local result = Workspace:Raycast(origin, dir, rayParams)
-            
-            if result and result.Instance and not result.Instance:IsDescendantOf(char) then
-                return false
-            end
+        local part = resolveTargetPart(char, SilentAim.TargetPart)
+        if part and not visibleCheck(char, part) then
+            return false
         end
     end
-    
-    return true
-end
 
-local function rollHitChance()
-    local chance = math.clamp(SilentAim.HitChance or 100, 0, 100)
-    if chance >= 100 then return true end
-    if chance <= 0 then return false end
-    return math.random(1, 100) <= chance
+    return true
 end
 
 local function getClosestTarget()
     if not SilentAim.Enabled then return nil, nil end
-    if not Camera then Camera = Workspace.CurrentCamera end
-    if not Camera then return nil, nil end
-    
+    local cam = getCamera()
+    if not cam then return nil, nil end
+
     local mousePos = UserInputService:GetMouseLocation()
     local shortestDist = SilentAim.FOVRadius or 150
     local closestPlr = nil
     local closestPart = nil
-    
+
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
             local char = plr.Character
             if passesValidation(plr, char) then
                 local part = resolveTargetPart(char, SilentAim.TargetPart)
                 if part then
-                    local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                    local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
                     if onScreen then
                         local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
                         if dist <= shortestDist then
@@ -177,13 +220,56 @@ local function getClosestTarget()
             end
         end
     end
-    
+
     SilentAim.SelectedTarget = closestPlr
     SilentAim.SelectedPart = closestPart
     return closestPlr, closestPart
 end
 
+-- Per-frame cached target + hit chance resolution
+local function resolveFrameTarget()
+    if _cachedFrame == _frameCounter then
+        return _cachedRoll, _cachedTarget, _cachedPart
+    end
+    _cachedFrame = _frameCounter
+
+    local plr, part = getClosestTarget()
+    _cachedTarget = plr
+    _cachedPart = part
+
+    if not part then
+        _cachedRoll = false
+        return false, nil, nil
+    end
+
+    local chance = math.clamp(SilentAim.HitChance or 100, 0, 100)
+    if chance >= 100 then
+        _cachedRoll = true
+    elseif chance <= 0 then
+        _cachedRoll = false
+    else
+        _cachedRoll = math.random(1, 100) <= chance
+    end
+
+    return _cachedRoll, _cachedTarget, _cachedPart
+end
+
+local function getPredictedPosition(part)
+    if not part then return nil end
+    local pos = part.Position
+    if SilentAim.Prediction then
+        local vel = Vector3.zero
+        pcall(function()
+            vel = part.AssemblyLinearVelocity or part.Velocity or Vector3.zero
+        end)
+        pos = pos + vel * (SilentAim.PredictionAmount or 0.135)
+    end
+    return pos
+end
+
 RunService.RenderStepped:Connect(function()
+    _frameCounter = _frameCounter + 1
+
     if fovCircle then
         if SilentAim.Enabled and SilentAim.FOVVisible then
             local mousePos = UserInputService:GetMouseLocation()
@@ -198,94 +284,80 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-local function getPredictedPosition(part)
-    if not part then return nil end
-    local pos = part.Position
-    if SilentAim.Prediction then
-        local vel = Vector3.zero
-        pcall(function()
-            vel = part.AssemblyLinearVelocity or part.Velocity or Vector3.zero
-        end)
-        pos = pos + (vel * (SilentAim.PredictionAmount or 0.135))
-    end
-    return pos
-end
-
-local oldNamecall = nil
 local oldIndex = nil
 
 local function hookMetamethods()
     if not hookmetamethod or not getnamecallmethod or not checkcaller or not newcclosure then
-        warn("[UltimateX SilentAim] Executor does not support hookmetamethod / getnamecallmethod.")
         return
     end
 
     oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        local args = {...}
-        
-        if not checkcaller() and SilentAim.Enabled and self == Workspace then
-            if method == "Raycast" then
-                if rollHitChance() then
-                    local _, targetPart = getClosestTarget()
-                    if targetPart then
-                        local origin = args[1]
+
+        if not checkcaller() and SilentAim.Enabled
+            and (rawequal(self, RealWorkspace) or rawequal(self, game:GetService("Workspace"))) then
+
+            if method == "Raycast"
+                or method == "FindPartOnRay"
+                or method == "FindPartOnRayWithIgnoreList"
+                or method == "FindPartOnRayWithWhitelist" then
+
+                local shouldHit, _, targetPart = resolveFrameTarget()
+                if shouldHit and targetPart then
+                    local args = {...}
+
+                    if method == "Raycast" then
+                        local origin    = args[1]
                         local direction = args[2]
                         if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
                             local targetPos = getPredictedPosition(targetPart)
                             if targetPos then
-                                local newDirection = (targetPos - origin).Unit * direction.Magnitude
-                                args[2] = newDirection
-                                return oldNamecall(self, unpack(args))
+                                local mag = direction.Magnitude
+                                if mag > 0 then
+                                    args[2] = (targetPos - origin).Unit * mag
+                                    return oldNamecall(self, unpack(args))
+                                end
                             end
                         end
-                    end
-                end
-            elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "FindPartOnRayWithWhitelist" then
-                if rollHitChance() then
-                    local _, targetPart = getClosestTarget()
-                    if targetPart then
+                    else
                         local ray = args[1]
                         if typeof(ray) == "Ray" then
                             local targetPos = getPredictedPosition(targetPart)
                             if targetPos then
-                                local newDirection = (targetPos - ray.Origin).Unit * ray.Direction.Magnitude
-                                args[1] = Ray.new(ray.Origin, newDirection)
-                                return oldNamecall(self, unpack(args))
+                                local mag = ray.Direction.Magnitude
+                                if mag > 0 then
+                                    args[1] = Ray.new(ray.Origin, (targetPos - ray.Origin).Unit * mag)
+                                    return oldNamecall(self, unpack(args))
+                                end
                             end
                         end
                     end
                 end
             end
         end
-        
+
         return oldNamecall(self, ...)
     end))
 
     oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, index)
         if not checkcaller() and SilentAim.Enabled then
-            if Mouse and self == Mouse then
-                if index == "Hit" then
-                    if rollHitChance() then
-                        local _, targetPart = getClosestTarget()
-                        if targetPart then
-                            local targetPos = getPredictedPosition(targetPart)
-                            if targetPos then
+            local mouse = getMouse()
+            if mouse and rawequal(self, mouse) then
+                if index == "Hit" or index == "Target" then
+                    local shouldHit, _, targetPart = resolveFrameTarget()
+                    if shouldHit and targetPart then
+                        local targetPos = getPredictedPosition(targetPart)
+                        if targetPos then
+                            if index == "Hit" then
                                 return CFrame.new(targetPos)
+                            else
+                                return targetPart
                             end
-                        end
-                    end
-                elseif index == "Target" then
-                    if rollHitChance() then
-                        local _, targetPart = getClosestTarget()
-                        if targetPart then
-                            return targetPart
                         end
                     end
                 end
             end
         end
-        
         return oldIndex(self, index)
     end))
 end
