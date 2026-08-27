@@ -1,0 +1,346 @@
+local cloneref = (type(cloneref) == "function") and cloneref or function(x) return x end
+local hookfunction = hookfunction or (type(hookmetamethod) == "function" and function(a, b)
+    return hookmetamethod(game, a, b)
+end) or error("Silent Aim requires hookfunction or hookmetamethod")
+local newcclosure = newcclosure or function(f) return f end
+local checkcaller  = checkcaller or function() return false end
+
+local Players     = cloneref(game:GetService("Players"))
+local RunService  = cloneref(game:GetService("RunService"))
+local UserInputService = cloneref(game:GetService("UserInputService"))
+local Camera      = workspace.CurrentCamera
+
+local lplr        = Players.LocalPlayer
+
+local rand = Random.new()
+
+local Config = {
+    Enabled         = false,
+
+    FOV             = 120,  
+    TargetPart      = "HumanoidRootPart",  
+    HeadshotChance  = 0, 
+    HitChance       = 100,
+    TeamCheck       = false,
+    WallCheck       = true,
+
+    Wallbang        = false,
+
+    PredictEnabled  = false,
+    BulletSpeed     = 300, 
+
+    ShowFOV         = false,
+    FOVColor        = Color3.fromRGB(255, 255, 255),
+    FOVThickness    = 1,
+}
+
+local hasDrawing = false
+local fovCircle  = nil
+pcall(function()
+    if type(Drawing) == "table" and type(Drawing.new) == "function" then
+        local t = Drawing.new("Circle")
+        if t then
+            pcall(function()
+                if t.Remove then t:Remove() else t:Destroy() end
+            end)
+            hasDrawing = true
+        end
+    end
+end)
+
+local function createFOVCircle()
+    if not hasDrawing then return end
+    pcall(function()
+        fovCircle = Drawing.new("Circle")
+        fovCircle.Visible     = false
+        fovCircle.Color       = Config.FOVColor
+        fovCircle.Thickness   = Config.FOVThickness
+        fovCircle.Filled      = false
+        fovCircle.Transparency = 0.7
+        fovCircle.NumSides    = 64
+    end)
+end
+
+local function destroyFOVCircle()
+    if fovCircle then
+        pcall(function()
+            if fovCircle.Remove then fovCircle:Remove()
+            elseif fovCircle.Destroy then fovCircle:Destroy() end
+        end)
+        fovCircle = nil
+    end
+end
+
+createFOVCircle()
+
+local fovRenderConn = RunService.RenderStepped:Connect(function()
+    if not fovCircle then return end
+    if not Config.Enabled or not Config.ShowFOV then
+        fovCircle.Visible = false
+        return
+    end
+    local mousePos = UserInputService:GetMouseLocation()
+    fovCircle.Position  = mousePos
+    fovCircle.Radius    = Config.FOV
+    fovCircle.Color     = Config.FOVColor
+    fovCircle.Thickness = Config.FOVThickness
+    fovCircle.Visible   = true
+end)
+
+local wallParams = RaycastParams.new()
+wallParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function isVisible(origin, targetPos, character)
+    if not Config.WallCheck then return true end
+    local dir  = (targetPos - origin)
+    local dist = dir.Magnitude
+    wallParams.FilterDescendantsInstances = {
+        lplr.Character or {},
+        character,
+        Camera,
+    }
+    local result = workspace:Raycast(origin, dir.Unit * dist, wallParams)
+    return not result
+end
+
+local function predictPosition(targetPart, origin)
+    if not Config.PredictEnabled then
+        return targetPart.Position
+    end
+    local dist = (targetPart.Position - origin).Magnitude
+    local tof  = dist / math.max(Config.BulletSpeed, 1)
+    local vel  = targetPart.AssemblyLinearVelocity
+    return targetPart.Position + vel * tof
+end
+
+local function getMousePos()
+    if UserInputService.TouchEnabled then
+        return Camera.ViewportSize / 2
+    end
+    return UserInputService:GetMouseLocation()
+end
+
+local function getTarget(rayOrigin)
+    if rand:NextNumber(0, 100) > Config.HitChance then return nil end
+
+    local mousePos  = getMousePos()
+    local bestDist  = Config.FOV
+    local bestPlr   = nil
+    local bestPart  = nil
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == lplr then continue end
+        if not plr.Character then continue end
+
+        local char = plr.Character
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        if char:FindFirstChildOfClass("ForceField") then continue end
+
+        if Config.TeamCheck and lplr.Team and plr.Team
+            and plr.Team == lplr.Team
+            and #plr.Team:GetPlayers() ~= #Players:GetPlayers() then
+            continue
+        end
+
+        local partName = Config.TargetPart
+        if rand:NextNumber(0, 100) < Config.HeadshotChance then
+            partName = "Head"
+        end
+        local part = char:FindFirstChild(partName) or char:FindFirstChild("HumanoidRootPart")
+        if not part then continue end
+
+        local predPos = predictPosition(part, rayOrigin)
+
+        local origin3 = rayOrigin or Camera.CFrame.Position
+        if not Config.Wallbang and not isVisible(origin3, predPos, char) then
+            continue
+        end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(predPos)
+        if not onScreen then continue end
+        local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+        if screenDist < bestDist then
+            bestDist = screenDist
+            bestPlr  = plr
+            bestPart = part
+        end
+    end
+
+    if not bestPart then return nil end
+    return bestPart, predictPosition(bestPart, rayOrigin or Camera.CFrame.Position)
+end
+
+local hooks = {}
+
+local function safeHook(object, methodName, newFunc)
+    local ok, result = pcall(function()
+        local orig = object[methodName]
+        local hooked = hookfunction(orig, newcclosure(function(...)
+            return newFunc(orig, ...)
+        end))
+        hooks[#hooks + 1] = { original = orig, hooked = hooked, object = object, method = methodName }
+        return hooked
+    end)
+    if not ok then
+        pcall(function()
+            local orig = object[methodName]
+            hooks[#hooks + 1] = { original = orig, object = object, method = methodName }
+            hookmetamethod(object, "__namecall", newcclosure(function(self, ...)
+                local name = getnamecallmethod()
+                if name == methodName then
+                    return newFunc(orig, self, ...)
+                end
+                return orig(self, ...)
+            end))
+        end)
+    end
+end
+
+local wallbangParams = RaycastParams.new()
+wallbangParams.FilterType = Enum.RaycastFilterType.Include
+
+local origRaycast = workspace.Raycast
+hooks[#hooks + 1] = {
+    original = origRaycast,
+    restore  = hookfunction(origRaycast, newcclosure(function(self, origin, direction, params)
+        if not Config.Enabled or checkcaller() then
+            return origRaycast(self, origin, direction, params)
+        end
+        local targetPart, predPos = getTarget(origin)
+        if not targetPart then
+            return origRaycast(self, origin, direction, params)
+        end
+        local newDir = CFrame.lookAt(origin, predPos).LookVector * direction.Magnitude
+        if Config.Wallbang then
+            wallbangParams.FilterDescendantsInstances = { targetPart }
+            return origRaycast(self, origin, newDir, wallbangParams)
+        end
+        return origRaycast(self, origin, newDir, params)
+    end))
+}
+
+local origFPOR = workspace.FindPartOnRay
+hooks[#hooks + 1] = {
+    original = origFPOR,
+    restore  = hookfunction(origFPOR, newcclosure(function(self, ray, ignoreDescendantsInstance, terrainCellsAreCubes, ignoreWater)
+        if not Config.Enabled or checkcaller() then
+            return origFPOR(self, ray, ignoreDescendantsInstance, terrainCellsAreCubes, ignoreWater)
+        end
+        local targetPart, predPos = getTarget(ray.Origin)
+        if not targetPart then
+            return origFPOR(self, ray, ignoreDescendantsInstance, terrainCellsAreCubes, ignoreWater)
+        end
+        if Config.Wallbang then
+            return targetPart, predPos, Vector3.new(0, 1, 0), targetPart.Material
+        end
+        local newRay = Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
+        return origFPOR(self, newRay, ignoreDescendantsInstance, terrainCellsAreCubes, ignoreWater)
+    end))
+}
+
+local origFPORWIL = workspace.FindPartOnRayWithIgnoreList
+hooks[#hooks + 1] = {
+    original = origFPORWIL,
+    restore  = hookfunction(origFPORWIL, newcclosure(function(self, ray, ignoreList, terrainCellsAreCubes, ignoreWater)
+        if not Config.Enabled or checkcaller() then
+            return origFPORWIL(self, ray, ignoreList, terrainCellsAreCubes, ignoreWater)
+        end
+        local targetPart, predPos = getTarget(ray.Origin)
+        if not targetPart then
+            return origFPORWIL(self, ray, ignoreList, terrainCellsAreCubes, ignoreWater)
+        end
+        if Config.Wallbang then
+            return targetPart, predPos, Vector3.new(0, 1, 0), targetPart.Material
+        end
+        local newRay = Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
+        return origFPORWIL(self, newRay, ignoreList, terrainCellsAreCubes, ignoreWater)
+    end))
+}
+
+local origFPORWWL = workspace.FindPartOnRayWithWhitelist
+hooks[#hooks + 1] = {
+    original = origFPORWWL,
+    restore  = hookfunction(origFPORWWL, newcclosure(function(self, ray, whiteList, ignoreWater)
+        if not Config.Enabled or checkcaller() then
+            return origFPORWWL(self, ray, whiteList, ignoreWater)
+        end
+        local targetPart, predPos = getTarget(ray.Origin)
+        if not targetPart then
+            return origFPORWWL(self, ray, whiteList, ignoreWater)
+        end
+        if Config.Wallbang then
+            return targetPart, predPos, Vector3.new(0, 1, 0), targetPart.Material
+        end
+        local newRay = Ray.new(ray.Origin, CFrame.lookAt(ray.Origin, predPos).LookVector * ray.Direction.Magnitude)
+        return origFPORWWL(self, newRay, whiteList, ignoreWater)
+    end))
+}
+
+local origSPTR = Camera.ScreenPointToRay
+hooks[#hooks + 1] = {
+    original = origSPTR,
+    restore  = hookfunction(origSPTR, newcclosure(function(self, x, y, depth)
+        local ray = origSPTR(self, x, y, depth)
+        if not Config.Enabled or checkcaller() then return ray end
+        local origin = ray.Origin
+        local targetPart, predPos = getTarget(origin)
+        if not targetPart then return ray end
+        return Ray.new(origin, CFrame.lookAt(origin, predPos).LookVector * ray.Direction.Magnitude)
+    end))
+}
+
+local origVPTR = Camera.ViewportPointToRay
+hooks[#hooks + 1] = {
+    original = origVPTR,
+    restore  = hookfunction(origVPTR, newcclosure(function(self, x, y, depth)
+        local ray = origVPTR(self, x, y, depth)
+        if not Config.Enabled or checkcaller() then return ray end
+        local origin = ray.Origin
+        local targetPart, predPos = getTarget(origin)
+        if not targetPart then return ray end
+        return Ray.new(origin, CFrame.lookAt(origin, predPos).LookVector * ray.Direction.Magnitude)
+    end))
+}
+
+local function Cleanup()
+    pcall(function() fovRenderConn:Disconnect() end)
+
+    for _, h in ipairs(hooks) do
+        pcall(function()
+            if h.restore then
+                hookfunction(h.restore, h.original)
+            end
+        end)
+    end
+    table.clear(hooks)
+
+    destroyFOVCircle()
+
+    pcall(function()
+        if type(getgenv) == "function" then
+            getgenv().UX_SilentAim = nil
+        end
+    end)
+end
+
+pcall(function()
+    if type(getgenv) == "function" then
+        -- Clean up any prior instance first
+        local prev = getgenv().UX_SilentAim
+        if type(prev) == "table" and type(prev.Cleanup) == "function" then
+            pcall(prev.Cleanup)
+        end
+        getgenv().UX_SilentAim = {
+            Config  = Config,
+            Cleanup = Cleanup,
+            Active  = true,
+        }
+    end
+end)
+
+return {
+    Config  = Config,
+    Cleanup = Cleanup,
+    Active  = true,
+}
