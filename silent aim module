@@ -1,152 +1,55 @@
--- github pls update my shit (slowed + reverbed)
-
+-- v1
 local cloneref = (type(cloneref) == "function") and cloneref or function(x) return x end
-local newccl = newcclosure or function(f) return f end
-local checkc = checkcaller or function() return false end
-local getncm = getnamecallmethod or get_namecall_method or function() return "" end
+local function svc(n)
+    local s = nil
+    pcall(function() s = cloneref(game:GetService(n)) end)
+    return s or game:GetService(n)
+end
 
-local Players = cloneref(game:GetService("Players"))
-local RunService = cloneref(game:GetService("RunService"))
-local UserInputService = cloneref(game:GetService("UserInputService"))
-local Camera = workspace.CurrentCamera
-local lplr = Players.LocalPlayer
-local Mouse = lplr:GetMouse()
+local Players = svc("Players")
+local Workspace = svc("Workspace")
+local RunService = svc("RunService")
+local UserInputService = svc("UserInputService")
+local GuiService = svc("GuiService")
 
-local WorldToScreen = Camera.WorldToScreenPoint
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local Mouse = LocalPlayer and LocalPlayer:GetMouse()
 
-local Config = {
+local SilentAim = {
     Enabled = false,
-    FOV = 130,
-    TargetPart = "HumanoidRootPart",
-    HeadshotChance = 0,
     HitChance = 100,
-    TeamCheck = false,
-    WallCheck = false,
-    ShowFOV = false,
+    TargetPart = "Head",
+    
+    FOVRadius = 150,
+    FOVVisible = false,
     FOVColor = Color3.fromRGB(255, 255, 255),
-    FOVThickness = 1,
-    PredictEnabled = false,
-    PredictAmount = 0.165,
+    FOVTransparency = 0.6,
+    
+    TeamCheck = false,
+    AliveCheck = true,
+    ForcefieldCheck = false,
+    VisibleCheck = false,
+    GodModeCheck = false,
+    
+    Prediction = false,
+    PredictionAmount = 0.135,
+    
+    SelectedTarget = nil,
+    SelectedPart = nil,
 }
 
-if type(getgenv) == "function" and type(getgenv().UX_SilentAim) == "table" and type(getgenv().UX_SilentAim.Config) == "table" then
-    for k, v in pairs(getgenv().UX_SilentAim.Config) do
-        Config[k] = v
-    end
-end
-
-local ValidTargetParts = {"Head", "HumanoidRootPart"}
-
-local ExpectedArguments = {
-    FindPartOnRayWithIgnoreList = {
-        ArgCountRequired = 3,
-        Args = {"Instance", "Ray", "table", "boolean", "boolean"}
-    },
-    FindPartOnRayWithWhitelist = {
-        ArgCountRequired = 3,
-        Args = {"Instance", "Ray", "table", "boolean"}
-    },
-    FindPartOnRay = {
-        ArgCountRequired = 2,
-        Args = {"Instance", "Ray", "Instance", "boolean", "boolean"}
-    },
-    Raycast = {
-        ArgCountRequired = 3,
-        Args = {"Instance", "Vector3", "Vector3", "RaycastParams"}
-    }
-}
-
-local function ValidateArguments(Args, RayMethod)
-    if #Args < RayMethod.ArgCountRequired then return false end
-    local Matches = 0
-    for Pos, Argument in next, Args do
-        if typeof(Argument) == RayMethod.Args[Pos] then
-            Matches = Matches + 1
-        end
-    end
-    return Matches >= RayMethod.ArgCountRequired
-end
-
-local function CalculateChance(Percentage)
-    Percentage = math.floor(Percentage)
-    local chance = math.floor(Random.new():NextNumber(0, 1) * 100) / 100
-    return chance <= Percentage / 100
-end
-
-local function getMousePosition()
-    if UserInputService.TouchEnabled then
-        return Camera.ViewportSize / 2
-    end
-    return UserInputService:GetMouseLocation()
-end
-
-local function getPositionOnScreen(Vector)
-    local Vec3, OnScreen = WorldToScreen(Camera, Vector)
-    return Vector2.new(Vec3.X, Vec3.Y), OnScreen
-end
-
-local function getDirection(Origin, Position)
-    return (Position - Origin).Unit * 1000
-end
-
-local function IsPlayerVisible(Character)
-    local lchar = lplr.Character
-    if not (Character and lchar) then return false end
-    local root = Character:FindFirstChild(Config.TargetPart) or Character:FindFirstChild("HumanoidRootPart")
-    if not root then return false end
-    local obscuring = #Camera:GetPartsObscuringTarget({root.Position}, {lchar, Character})
-    return obscuring == 0
-end
-
-local function getClosestPlayer()
-    local Closest = nil
-    local DistanceToMouse = nil
-    local mousePos = getMousePosition()
-
-    for _, Player in next, Players:GetPlayers() do
-        if Player == lplr then continue end
-        if Config.TeamCheck and Player.Team == lplr.Team then continue end
-
-        local Character = Player.Character
-        if not Character then continue end
-
-        local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-        if not Humanoid or Humanoid.Health <= 0 then continue end
-        if Character:FindFirstChildOfClass("ForceField") then continue end
-
-        if Config.WallCheck and not IsPlayerVisible(Character) then continue end
-
-        local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
-        if not HumanoidRootPart then continue end
-
-        local ScreenPosition, OnScreen = getPositionOnScreen(HumanoidRootPart.Position)
-        if not OnScreen then continue end
-
-        local Distance = (mousePos - ScreenPosition).Magnitude
-        if Distance <= (DistanceToMouse or Config.FOV) then
-            local partName = Config.TargetPart
-            if Config.HeadshotChance > 0 and math.random(0, 100) < Config.HeadshotChance then
-                partName = "Head"
-            end
-            local targetPart = Character:FindFirstChild(partName) or Character:FindFirstChild("HumanoidRootPart")
-            if not targetPart then continue end
-
-            Closest = targetPart
-            DistanceToMouse = Distance
-        end
-    end
-
-    return Closest
-end
+getgenv().UltimateX_SilentAim = SilentAim
 
 local hasDrawing = false
 local fovCircle = nil
+
 pcall(function()
     if type(Drawing) == "table" and type(Drawing.new) == "function" then
-        local t = Drawing.new("Circle")
-        if t then
+        local test = Drawing.new("Circle")
+        if test then
             pcall(function()
-                if t.Remove then t:Remove() elseif t.Destroy then t:Destroy() end
+                if test.Remove then test:Remove() elseif test.Destroy then test:Destroy() end
             end)
             hasDrawing = true
         end
@@ -158,142 +61,245 @@ if hasDrawing then
         fovCircle = Drawing.new("Circle")
         fovCircle.Thickness = 1
         fovCircle.NumSides = 64
-        fovCircle.Radius = Config.FOV
+        fovCircle.Radius = SilentAim.FOVRadius
         fovCircle.Filled = false
         fovCircle.Visible = false
-        fovCircle.ZIndex = 999
-        fovCircle.Transparency = 0.7
-        fovCircle.Color = Config.FOVColor
+        fovCircle.Transparency = SilentAim.FOVTransparency
+        fovCircle.Color = SilentAim.FOVColor
     end)
 end
 
-local fovConn = RunService.RenderStepped:Connect(function()
-    if not fovCircle then return end
-    if not Config.Enabled or not Config.ShowFOV then
-        fovCircle.Visible = false
-        return
+local randomParts = {"Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
+local currentRandomPart = "Head"
+local lastRandomUpdate = tick()
+
+local function resolveTargetPart(char, preferred)
+    if not char then return nil end
+    if preferred == "Random" then
+        if tick() - lastRandomUpdate >= 0.25 then
+            currentRandomPart = randomParts[math.random(1, #randomParts)]
+            lastRandomUpdate = tick()
+        end
+        return char:FindFirstChild(currentRandomPart) or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
     end
-    fovCircle.Visible = true
-    fovCircle.Position = getMousePosition()
-    fovCircle.Radius = Config.FOV
-    fovCircle.Color = Config.FOVColor
-    fovCircle.Thickness = Config.FOVThickness
+    
+    local clean = preferred
+    if clean == "Torso" then
+        return char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("LowerTorso") or char:FindFirstChild("HumanoidRootPart")
+    elseif clean == "Upper Torso" then
+        return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+    elseif clean == "Lower Torso" then
+        return char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+    end
+    
+    return char:FindFirstChild(clean) or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+end
+
+local function passesValidation(targetPlr, char)
+    if not targetPlr or targetPlr == LocalPlayer or not char then return false end
+    
+    if SilentAim.TeamCheck and LocalPlayer.Team and targetPlr.Team and targetPlr.Team == LocalPlayer.Team then
+        return false
+    end
+    
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    
+    if SilentAim.AliveCheck and hum.Health <= 0 then
+        return false
+    end
+    
+    if SilentAim.ForcefieldCheck and char:FindFirstChildOfClass("ForceField") then
+        return false
+    end
+    
+    if SilentAim.GodModeCheck then
+        local hp = tostring(hum.Health)
+        if hp == "inf" or hp:lower() == "nan" or hum.Health >= 1e18 then
+            return false
+        end
+    end
+    
+    if SilentAim.VisibleCheck then
+        local targetPart = resolveTargetPart(char, SilentAim.TargetPart)
+        if targetPart then
+            local rayParams = RaycastParams.new()
+            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+            rayParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+            rayParams.IgnoreWater = true
+            
+            local origin = Camera.CFrame.Position
+            local dir = (targetPart.Position - origin)
+            local result = Workspace:Raycast(origin, dir, rayParams)
+            
+            if result and result.Instance and not result.Instance:IsDescendantOf(char) then
+                return false
+            end
+        end
+    end
+    
+    return true
+end
+
+local function rollHitChance()
+    local chance = math.clamp(SilentAim.HitChance or 100, 0, 100)
+    if chance >= 100 then return true end
+    if chance <= 0 then return false end
+    return math.random(1, 100) <= chance
+end
+
+local function getClosestTarget()
+    if not SilentAim.Enabled then return nil, nil end
+    if not Camera then Camera = Workspace.CurrentCamera end
+    if not Camera then return nil, nil end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local shortestDist = SilentAim.FOVRadius or 150
+    local closestPlr = nil
+    local closestPart = nil
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local char = plr.Character
+            if passesValidation(plr, char) then
+                local part = resolveTargetPart(char, SilentAim.TargetPart)
+                if part then
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                        if dist <= shortestDist then
+                            shortestDist = dist
+                            closestPlr = plr
+                            closestPart = part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    SilentAim.SelectedTarget = closestPlr
+    SilentAim.SelectedPart = closestPart
+    return closestPlr, closestPart
+end
+
+RunService.RenderStepped:Connect(function()
+    if fovCircle then
+        if SilentAim.Enabled and SilentAim.FOVVisible then
+            local mousePos = UserInputService:GetMouseLocation()
+            fovCircle.Position = mousePos
+            fovCircle.Radius = SilentAim.FOVRadius or 150
+            fovCircle.Color = SilentAim.FOVColor or Color3.fromRGB(255, 255, 255)
+            fovCircle.Transparency = SilentAim.FOVTransparency or 0.6
+            fovCircle.Visible = true
+        else
+            fovCircle.Visible = false
+        end
+    end
 end)
+
+local function getPredictedPosition(part)
+    if not part then return nil end
+    local pos = part.Position
+    if SilentAim.Prediction then
+        local vel = Vector3.zero
+        pcall(function()
+            vel = part.AssemblyLinearVelocity or part.Velocity or Vector3.zero
+        end)
+        pos = pos + (vel * (SilentAim.PredictionAmount or 0.135))
+    end
+    return pos
+end
 
 local oldNamecall = nil
 local oldIndex = nil
 
-oldNamecall = hookmetamethod(game, "__namecall", newccl(function(...)
-    local Method = getncm()
-    local Arguments = {...}
-    local self = Arguments[1]
+local function hookMetamethods()
+    if not hookmetamethod or not getnamecallmethod or not checkcaller or not newcclosure then
+        warn("[UltimateX SilentAim] Executor does not support hookmetamethod / getnamecallmethod.")
+        return
+    end
 
-    if Config.Enabled and self == workspace and not checkc() and CalculateChance(Config.HitChance) then
-        if Method == "FindPartOnRayWithIgnoreList" then
-            if ValidateArguments(Arguments, ExpectedArguments.FindPartOnRayWithIgnoreList) then
-                local A_Ray = Arguments[2]
-                local HitPart = getClosestPlayer()
-                if HitPart then
-                    local Origin = A_Ray.Origin
-                    local Direction = getDirection(Origin, HitPart.Position)
-                    Arguments[2] = Ray.new(Origin, Direction)
-                    return oldNamecall(unpack(Arguments))
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        if not checkcaller() and SilentAim.Enabled and self == Workspace then
+            if method == "Raycast" then
+                if rollHitChance() then
+                    local _, targetPart = getClosestTarget()
+                    if targetPart then
+                        local origin = args[1]
+                        local direction = args[2]
+                        if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                            local targetPos = getPredictedPosition(targetPart)
+                            if targetPos then
+                                local newDirection = (targetPos - origin).Unit * direction.Magnitude
+                                args[2] = newDirection
+                                return oldNamecall(self, unpack(args))
+                            end
+                        end
+                    end
                 end
-            end
-        elseif Method == "FindPartOnRayWithWhitelist" then
-            if ValidateArguments(Arguments, ExpectedArguments.FindPartOnRayWithWhitelist) then
-                local A_Ray = Arguments[2]
-                local HitPart = getClosestPlayer()
-                if HitPart then
-                    local Origin = A_Ray.Origin
-                    local Direction = getDirection(Origin, HitPart.Position)
-                    Arguments[2] = Ray.new(Origin, Direction)
-                    return oldNamecall(unpack(Arguments))
-                end
-            end
-        elseif Method == "FindPartOnRay" or Method == "findPartOnRay" then
-            if ValidateArguments(Arguments, ExpectedArguments.FindPartOnRay) then
-                local A_Ray = Arguments[2]
-                local HitPart = getClosestPlayer()
-                if HitPart then
-                    local Origin = A_Ray.Origin
-                    local Direction = getDirection(Origin, HitPart.Position)
-                    Arguments[2] = Ray.new(Origin, Direction)
-                    return oldNamecall(unpack(Arguments))
-                end
-            end
-        elseif Method == "Raycast" then
-            if ValidateArguments(Arguments, ExpectedArguments.Raycast) then
-                local A_Origin = Arguments[2]
-                local HitPart = getClosestPlayer()
-                if HitPart then
-                    Arguments[3] = getDirection(A_Origin, HitPart.Position)
-                    return oldNamecall(unpack(Arguments))
+            elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "FindPartOnRayWithWhitelist" then
+                if rollHitChance() then
+                    local _, targetPart = getClosestTarget()
+                    if targetPart then
+                        local ray = args[1]
+                        if typeof(ray) == "Ray" then
+                            local targetPos = getPredictedPosition(targetPart)
+                            if targetPos then
+                                local newDirection = (targetPos - ray.Origin).Unit * ray.Direction.Magnitude
+                                args[1] = Ray.new(ray.Origin, newDirection)
+                                return oldNamecall(self, unpack(args))
+                            end
+                        end
+                    end
                 end
             end
         end
-    end
+        
+        return oldNamecall(self, ...)
+    end))
 
-    return oldNamecall(...)
-end))
-
-oldIndex = hookmetamethod(game, "__index", newccl(function(self, Index)
-    if self == Mouse and not checkc() and Config.Enabled then
-        local HitPart = getClosestPlayer()
-        if HitPart then
-            if Index == "Target" or Index == "target" then
-                return HitPart
-            elseif Index == "Hit" or Index == "hit" then
-                if Config.PredictEnabled then
-                    return HitPart.CFrame + (HitPart.AssemblyLinearVelocity * Config.PredictAmount)
+    oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, index)
+        if not checkcaller() and SilentAim.Enabled then
+            if Mouse and self == Mouse then
+                if index == "Hit" then
+                    if rollHitChance() then
+                        local _, targetPart = getClosestTarget()
+                        if targetPart then
+                            local targetPos = getPredictedPosition(targetPart)
+                            if targetPos then
+                                return CFrame.new(targetPos)
+                            end
+                        end
+                    end
+                elseif index == "Target" then
+                    if rollHitChance() then
+                        local _, targetPart = getClosestTarget()
+                        if targetPart then
+                            return targetPart
+                        end
+                    end
                 end
-                return HitPart.CFrame
-            elseif Index == "UnitRay" then
-                return Ray.new(Mouse.Origin, (Mouse.Hit.Position - Mouse.Origin).Unit)
             end
         end
-    end
-    return oldIndex(self, Index)
-end))
+        
+        return oldIndex(self, index)
+    end))
+end
 
-local function Cleanup()
-    pcall(function() fovConn:Disconnect() end)
+pcall(hookMetamethods)
+
+SilentAim.Cleanup = function()
+    SilentAim.Enabled = false
     if fovCircle then
         pcall(function()
-            if fovCircle.Remove then fovCircle:Remove()
-            elseif fovCircle.Destroy then fovCircle:Destroy() end
+            if fovCircle.Remove then fovCircle:Remove() elseif fovCircle.Destroy then fovCircle:Destroy() end
         end)
         fovCircle = nil
     end
-    if oldNamecall then
-        pcall(function() hookmetamethod(game, "__namecall", oldNamecall) end)
-        oldNamecall = nil
-    end
-    if oldIndex then
-        pcall(function() hookmetamethod(game, "__index", oldIndex) end)
-        oldIndex = nil
-    end
-    pcall(function()
-        if type(getgenv) == "function" then
-            getgenv().UX_SilentAim = nil
-        end
-    end)
 end
 
-local exportTable = {
-    Config = Config,
-    Cleanup = Cleanup,
-    Active = true
-}
-
-pcall(function()
-    if type(getgenv) == "function" then
-        local prev = getgenv().UX_SilentAim
-        if type(prev) == "table" and type(prev.Cleanup) == "function" and prev.Cleanup ~= Cleanup then
-            pcall(prev.Cleanup)
-        end
-        getgenv().UX_SilentAim = exportTable
-    end
-end)
-
-return exportTable
+return SilentAim
